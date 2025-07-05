@@ -323,31 +323,59 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Event-Delegation für Kopier-Buttons
+    // Verbesserte Event-Delegation für alle Buttons
     document.addEventListener('click', function(e) {
-        if (e.target.classList.contains('copy-button')) {
-            const targetId = e.target.getAttribute('data-target');
+        // Prüfen, ob das geklickte Element oder eines seiner Elternelemente die Klasse 'copy-button' hat
+        const copyButton = e.target.closest('.copy-button');
+        if (copyButton) {
+            const targetId = copyButton.getAttribute('data-target');
             const contentElement = document.getElementById(targetId);
             copyToClipboard(contentElement.textContent);
             
             // Feedback für den Benutzer
-            const originalText = e.target.textContent;
-            e.target.textContent = 'Kopiert!';
+            const originalHTML = copyButton.innerHTML;
+            copyButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg> Kopiert!';
             setTimeout(() => {
-                e.target.textContent = originalText;
+                copyButton.innerHTML = originalHTML;
             }, 2000);
         }
         
-        if (e.target.classList.contains('copy-image-button')) {
-            const imageUrl = e.target.getAttribute('data-image-url');
+        // Prüfen, ob das geklickte Element oder eines seiner Elternelemente die Klasse 'copy-image-button' hat
+        const copyImageButton = e.target.closest('.copy-image-button');
+        if (copyImageButton) {
+            const imageUrl = copyImageButton.getAttribute('data-image-url');
             copyImageToClipboard(imageUrl);
             
             // Feedback für den Benutzer
-            const originalText = e.target.textContent;
-            e.target.textContent = 'Kopiert!';
+            const originalHTML = copyImageButton.innerHTML;
+            copyImageButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>';
             setTimeout(() => {
-                e.target.textContent = originalText;
+                copyImageButton.innerHTML = originalHTML;
             }, 2000);
+        }
+        
+        // Prüfen, ob das geklickte Element oder eines seiner Elternelemente die Klasse 'download-image-button' hat
+        const downloadButton = e.target.closest('.download-image-button');
+        if (downloadButton) {
+            try {
+                const imageUrl = downloadButton.getAttribute('data-image-url');
+                const a = document.createElement('a');
+                a.href = imageUrl;
+                a.download = 'bild_' + new Date().getTime() + '.jpg';
+                a.target = '_blank';
+                a.click();
+                
+                // Visuelles Feedback
+                const originalHTML = downloadButton.innerHTML;
+                downloadButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>';
+                
+                setTimeout(() => {
+                    downloadButton.innerHTML = originalHTML;
+                }, 2000);
+            } catch (error) {
+                console.error('Fehler beim Herunterladen des Bildes:', error);
+                alert('Das Bild konnte nicht heruntergeladen werden. Versuche es mit Rechtsklick -> Bild speichern unter...');
+            }
         }
     });
 
@@ -841,26 +869,9 @@ function displayData(data) {
             downloadButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>';
             downloadButton.title = 'Bild herunterladen';
             downloadButton.className = 'download-image-button';
-            downloadButton.addEventListener('click', function() {
-                try {
-                    const a = document.createElement('a');
-                    a.href = imageUrl;
-                    a.download = 'bild_' + new Date().getTime() + '.jpg';
-                    a.target = '_blank';
-                    a.click();
-                    
-                    // Visuelles Feedback
-                    const originalHTML = downloadButton.innerHTML;
-                    downloadButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>';
-                    
-                    setTimeout(() => {
-                        downloadButton.innerHTML = originalHTML;
-                    }, 2000);
-                } catch (error) {
-                    console.error('Fehler beim Herunterladen des Bildes:', error);
-                    alert('Das Bild konnte nicht heruntergeladen werden. Versuche es mit Rechtsklick -> Bild speichern unter...');
-                }
-            });
+            downloadButton.setAttribute('data-image-url', imageUrl);
+            
+            // Wir verwenden Event-Delegation für alle Download-Buttons, daher kein direkter Event-Listener hier
             
             imageButtons.appendChild(copyButton);
             imageButtons.appendChild(downloadButton);
