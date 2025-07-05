@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kleinanzeigen to eBay</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Kleinanzeigen to eBay</h1>
+        <div class="input-section">
+            <label for="kleinanzeigen-url">Kleinanzeigen URL einfügen:</label>
+            <input type="text" id="kleinanzeigen-url" placeholder="https://www.kleinanzeigen.de/... oder Stichwort wie 'iphone', 'sofa'">
+            <button id="extract-button">Daten extrahieren</button>
+            <p class="demo-hint">Tipp: Gib eine Kleinanzeigen-URL ein oder verwende "demo", "iphone" oder "sofa" für Demo-Daten.</p>
+        </div>
+        <div class="loading" id="loading-indicator">
+            <div class="spinner"></div>
+            <p>Daten werden geladen...</p>
+        </div>
+        <div class="results" id="results-container">
+            <div class="result-section">
+                <h2>Titel</h2>
+                <div class="copy-section">
+                    <p id="title-content"></p>
+                    <button class="copy-button" data-target="title-content">Kopieren</button>
+                </div>
+            </div>
+            <div class="result-section">
+                <h2>Beschreibung</h2>
+                <div class="copy-section">
+                    <p id="description-content"></p>
+                    <button class="copy-button" data-target="description-content">Kopieren</button>
+                </div>
+            </div>
+            <div class="result-section">
+                <h2>Bilder</h2>
+                <div id="images-container" class="images-grid"></div>
+            </div>
+        </div>
+        <div class="error-message" id="error-message">
+            <p>Es ist ein Fehler aufgetreten. Bitte überprüfe die URL und versuche es erneut.</p>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
