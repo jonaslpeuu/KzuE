@@ -2,47 +2,112 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <meta name="description" content="Tool zum Extrahieren von Daten von Kleinanzeigen für eBay">
+    <meta name="theme-color" content="#e53935">
     <title>Kleinanzeigen to eBay</title>
     <link rel="stylesheet" href="styles.css">
+    <!-- Favicon -->
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <!-- Offline-Unterstützung -->
+    <link rel="manifest" href="manifest.json">
+    <!-- Apple Touch Icon -->
+    <link rel="apple-touch-icon" href="favicon.svg">
 </head>
 <body>
     <div class="container">
         <h1>Kleinanzeigen to eBay</h1>
+        <noscript>
+            <div class="error-message" style="display: block;">
+                <p>Diese Anwendung benötigt JavaScript. Bitte aktiviere JavaScript in deinem Browser.</p>
+            </div>
+        </noscript>
         <div class="input-section">
             <label for="kleinanzeigen-url">Kleinanzeigen URL einfügen:</label>
-            <input type="text" id="kleinanzeigen-url" placeholder="https://www.kleinanzeigen.de/... oder Stichwort wie 'iphone', 'sofa'">
-            <button id="extract-button">Daten extrahieren</button>
+            <input type="text" id="kleinanzeigen-url" 
+                   placeholder="https://www.kleinanzeigen.de/... oder Stichwort wie 'iphone', 'sofa'" 
+                   autocomplete="off" 
+                   autocapitalize="off" 
+                   spellcheck="false" 
+                   aria-label="Kleinanzeigen URL">
+            <button id="extract-button" aria-label="Daten extrahieren">Daten extrahieren</button>
             <p class="demo-hint">Tipp: Gib eine Kleinanzeigen-URL ein oder verwende "demo", "iphone" oder "sofa" für Demo-Daten.</p>
         </div>
         <div class="loading" id="loading-indicator">
-            <div class="spinner"></div>
+            <div class="spinner" role="progressbar" aria-label="Lädt..."></div>
             <p>Daten werden geladen...</p>
+            <p class="loading-time" id="loading-time">0s</p>
         </div>
         <div class="results" id="results-container">
             <div class="result-section">
                 <h2>Titel</h2>
                 <div class="copy-section">
                     <p id="title-content"></p>
-                    <button class="copy-button" data-target="title-content">Kopieren</button>
+                    <button class="copy-button" data-target="title-content" aria-label="Titel kopieren">Kopieren</button>
                 </div>
             </div>
             <div class="result-section">
                 <h2>Beschreibung</h2>
                 <div class="copy-section">
                     <p id="description-content"></p>
-                    <button class="copy-button" data-target="description-content">Kopieren</button>
+                    <button class="copy-button" data-target="description-content" aria-label="Beschreibung kopieren">Kopieren</button>
                 </div>
             </div>
             <div class="result-section">
                 <h2>Bilder</h2>
                 <div id="images-container" class="images-grid"></div>
             </div>
+            <div class="result-actions">
+                <button id="reset-button" class="reset-button" aria-label="Zurücksetzen">Neue Anfrage</button>
+            </div>
         </div>
         <div class="error-message" id="error-message">
             <p>Es ist ein Fehler aufgetreten. Bitte überprüfe die URL und versuche es erneut.</p>
+            <button id="error-dismiss" class="error-dismiss-button">Schließen</button>
         </div>
+        
+        <footer class="footer">
+            <p>© 2023 Kleinanzeigen to eBay | Version 1.1.0</p>
+            <p>Dieses Tool ist nicht mit Kleinanzeigen oder eBay verbunden.</p>
+        </footer>
     </div>
+    
+    <!-- Offline-Benachrichtigung -->
+    <div id="offline-notification" class="offline-notification">
+        <p>Du bist offline. Einige Funktionen sind möglicherweise eingeschränkt.</p>
+    </div>
+    
     <script src="script.js"></script>
+    
+    <!-- Offline-Unterstützung -->
+    <script>
+        // Überprüfe, ob der Browser online ist
+        function updateOnlineStatus() {
+            const offlineNotification = document.getElementById('offline-notification');
+            if (navigator.onLine) {
+                offlineNotification.classList.remove('visible');
+            } else {
+                offlineNotification.classList.add('visible');
+            }
+        }
+
+        window.addEventListener('online', updateOnlineStatus);
+        window.addEventListener('offline', updateOnlineStatus);
+        updateOnlineStatus(); // Initial prüfen
+        
+        // Service Worker registrieren
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then(registration => {
+                        console.log('Service Worker erfolgreich registriert:', registration.scope);
+                    })
+                    .catch(error => {
+                        console.error('Service Worker Registrierung fehlgeschlagen:', error);
+                    });
+            });
+        }
+    </script>
 </body>
 </html>
