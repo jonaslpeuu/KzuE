@@ -10,17 +10,54 @@ document.addEventListener('DOMContentLoaded', function() {
         CACHE_MAX_SIZE: 50 // Maximale Anzahl an Cache-Einträgen
     };
     
-    // Cache-Mechanismus für bereits extrahierte Daten
-    const dataCache = new Map();
+    // Cache-Mechanismus für bereits extrahierte Daten mit localStorage-Persistenz
+    let dataCache = new Map();
+    
+    // Lade den Cache aus dem localStorage beim Start
+    function loadCacheFromStorage() {
+        try {
+            const savedCache = localStorage.getItem('kleinanzeigenExtractorCache');
+            if (savedCache) {
+                const parsedCache = JSON.parse(savedCache);
+                dataCache = new Map(parsedCache);
+                console.log(`Cache geladen: ${dataCache.size} Einträge`);
+                cleanupCache(); // Bereinige den geladenen Cache sofort
+            }
+        } catch (error) {
+            console.error('Fehler beim Laden des Caches:', error);
+            dataCache = new Map(); // Fallback zu leerem Cache bei Fehler
+        }
+    }
+    
+    // Speichere den Cache im localStorage
+    function saveCacheToStorage() {
+        try {
+            const cacheArray = Array.from(dataCache.entries());
+            localStorage.setItem('kleinanzeigenExtractorCache', JSON.stringify(cacheArray));
+        } catch (error) {
+            console.error('Fehler beim Speichern des Caches:', error);
+            // Bei Speicherfehlern (z.B. QuotaExceededError) Cache leeren
+            if (error.name === 'QuotaExceededError') {
+                dataCache.clear();
+                try {
+                    localStorage.removeItem('kleinanzeigenExtractorCache');
+                } catch (e) {
+                    console.error('Konnte Cache nicht entfernen:', e);
+                }
+            }
+        }
+    }
     
     // Funktion zum Löschen alter Cache-Einträge
     function cleanupCache() {
         const now = Date.now();
+        let entriesRemoved = 0;
         
         // Lösche abgelaufene Einträge
         for (const [url, data] of dataCache.entries()) {
             if (data.timestamp && now - data.timestamp > CONFIG.CACHE_EXPIRY) {
                 dataCache.delete(url);
+                entriesRemoved++;
             }
         }
         
@@ -32,9 +69,21 @@ document.addEventListener('DOMContentLoaded', function() {
             const toDelete = entries.slice(0, entries.length - CONFIG.CACHE_MAX_SIZE);
             for (const [url] of toDelete) {
                 dataCache.delete(url);
+                entriesRemoved++;
             }
         }
+        
+        // Speichere den bereinigten Cache, wenn Einträge entfernt wurden
+        if (entriesRemoved > 0) {
+            saveCacheToStorage();
+            console.log(`Cache bereinigt: ${entriesRemoved} Einträge entfernt`);
+        }
+        
+        return entriesRemoved;
     }
+    
+    // Lade den Cache beim Start
+    loadCacheFromStorage();
     
     // Offline-Status überwachen
     function updateOfflineStatus() {
@@ -61,18 +110,37 @@ document.addEventListener('DOMContentLoaded', function() {
         return element;
     }
     
-    const urlInput = getElement('kleinanzeigen-url');
+    const urlInput = getElement('url-input');
     const extractButton = getElement('extract-button');
+    const pasteButton = getElement('paste-button');
     const loadingIndicator = getElement('loading-indicator');
+    const loadingSubtext = getElement('loading-subtext');
     const resultsContainer = getElement('results-container');
-    const titleContent = getElement('title-content');
-    const descriptionContent = getElement('description-content');
+    const titleResult = getElement('title-result');
+    const descriptionResult = getElement('description-result');
+    const priceResult = getElement('price-result');
+    const locationResult = getElement('location-result');
     const imagesContainer = getElement('images-container');
-    const errorMessage = getElement('error-message');
-    const resetButton = getElement('reset-button');
-    const errorDismissButton = getElement('error-dismiss');
+    const errorContainer = getElement('error-container');
+    const errorText = getElement('error-text');
+    const retryButton = getElement('retry-button');
+    const copyAllButton = getElement('copy-all-button');
+    const newExtractionButton = getElement('new-extraction-button');
+    const copyTitleButton = getElement('copy-title-button');
+    const copyDescriptionButton = getElement('copy-description-button');
+    const copyPriceButton = getElement('copy-price-button');
+    const copyLocationButton = getElement('copy-location-button');
+    const copyAllImagesButton = getElement('copy-all-images-button');
+    const downloadAllImagesButton = getElement('download-all-images-button');
+    const originalLink = getElement('original-link');
+    const connectionStatus = getElement('connection-status');
+    const cacheStatus = getElement('cache-status');
+    const helpButton = getElement('help-button');
+    const helpModal = getElement('help-modal');
+    const closeHelpButton = getElement('close-help-button');
     const loadingTimeElement = getElement('loading-time');
     const offlineNotification = getElement('offline-notification');
+    const statusBar = getElement('status-bar');
     
     // Globale Variablen für den Zustand der Anwendung
     let isProcessing = false;
@@ -83,7 +151,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Event-Listener für den Extract-Button mit Debounce
     let debounceTimer;
-    extractButton.addEventListener('click', function() {
+    extractButton.addEventListener('click', handleExtractButtonClick);
+    
+    // Funktion zum Verarbeiten des Extract-Button-Klicks
+    function handleExtractButtonClick() {
         // Debounce, um mehrfache Klicks zu verhindern
         if (debounceTimer) clearTimeout(debounceTimer);
         
@@ -102,22 +173,31 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             
+            // Liste der Demo-Optionen
+            const demoOptions = ['demo', 'iphone', 'sofa', 'mountainbike'];
+            const isDemoOption = demoOptions.some(option => url.toLowerCase().includes(option)) || (!url.includes('.') && url.length < 30);
+            
             // Prüfen, ob wir offline sind
-            if (!navigator.onLine && !url.includes('demo')) {
+            if (!navigator.onLine && !isDemoOption) {
                 showError('Du bist offline. Bitte überprüfe deine Internetverbindung oder verwende den Demo-Modus.');
+                updateConnectionStatus('Offline', 'error');
                 return;
             }
             
-            // Prüfen, ob die Daten im Cache sind
-            if (dataCache.has(url) && !url.includes('demo')) {
+            // Prüfen, ob die Daten im Cache sind und nicht explizit ein Demo angefordert wurde
+            if (dataCache.has(url) && !isDemoOption) {
                 const cachedData = dataCache.get(url);
-                displayData(cachedData);
-                return;
+                // Prüfen, ob die Cache-Daten noch gültig sind
+                if (cachedData.timestamp && Date.now() - cachedData.timestamp < CONFIG.CACHE_EXPIRY) {
+                    updateConnectionStatus('Aus Cache geladen', 'success');
+                    displayData(cachedData);
+                    return;
+                }
             }
             
             // Verhindern, dass die gleiche URL mehrmals hintereinander verarbeitet wird
-            if (url === lastProcessedUrl && !url.includes('demo')) {
-                showError('Diese URL wurde bereits verarbeitet. Bitte gib eine andere URL ein.');
+            if (url === lastProcessedUrl && !isDemoOption) {
+                showError('Diese URL wurde bereits verarbeitet. Bitte gib eine andere URL ein oder klicke auf "Neue Extraktion".');
                 return;
             }
             
@@ -128,10 +208,10 @@ document.addEventListener('DOMContentLoaded', function() {
             extractDataFromUrl(url);
             lastProcessedUrl = url;
         }, CONFIG.DEBOUNCE_TIME);
-    });
+    }
     
     // Event-Listener für den Reset-Button
-    resetButton.addEventListener('click', function() {
+    newExtractionButton.addEventListener('click', function() {
         clearResults();
         hideResults();
         hideError();
@@ -140,15 +220,106 @@ document.addEventListener('DOMContentLoaded', function() {
         lastProcessedUrl = '';
     });
     
-    // Event-Listener für den Error-Dismiss-Button
-    errorDismissButton.addEventListener('click', function() {
-        hideError();
+    // Event-Listener für den Retry-Button
+    retryButton.addEventListener('click', function() {
+        if (urlInput.value.trim()) {
+            extractButton.click();
+        } else {
+            showError('Bitte gib eine URL ein, bevor du es erneut versuchst.');
+        }
     });
 
     // Event-Listener für Enter-Taste im Input-Feld
     urlInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             extractButton.click();
+        }
+    });
+    
+    // Event-Listener für den Paste-Button
+    pasteButton.addEventListener('click', async function() {
+        try {
+            const text = await navigator.clipboard.readText();
+            urlInput.value = text.trim();
+            urlInput.focus();
+        } catch (error) {
+            console.error('Fehler beim Einfügen aus der Zwischenablage:', error);
+            showError('Zugriff auf die Zwischenablage nicht möglich. Bitte füge die URL manuell ein.');
+        }
+    });
+    
+    // Event-Listener für den Help-Button und Close-Help-Button
+    helpButton.addEventListener('click', function() {
+        helpModal.classList.add('visible');
+    });
+    
+    closeHelpButton.addEventListener('click', function() {
+        helpModal.classList.remove('visible');
+    });
+    
+    // Event-Listener für Klicks außerhalb des Modals zum Schließen
+    window.addEventListener('click', function(event) {
+        if (event.target === helpModal) {
+            helpModal.classList.remove('visible');
+        }
+    });
+    
+    // Event-Listener für Copy-All-Button
+    copyAllButton.addEventListener('click', function() {
+        const title = titleResult.textContent;
+        const description = descriptionResult.textContent;
+        const price = priceResult.textContent;
+        const location = locationResult.textContent;
+        
+        const allText = `${title}\n\n${description}\n\nPreis: ${price}\nStandort: ${location}`;
+        copyToClipboard(allText);
+        
+        // Feedback für den Benutzer
+        const originalText = copyAllButton.textContent;
+        copyAllButton.textContent = 'Alles kopiert!';
+        setTimeout(() => {
+            copyAllButton.textContent = originalText;
+        }, 2000);
+    });
+    
+    // Event-Listener für Copy-All-Images-Button
+    copyAllImagesButton.addEventListener('click', function() {
+        const imageButtons = document.querySelectorAll('.copy-image-button');
+        if (imageButtons.length > 0) {
+            // Kopiere das erste Bild
+            const firstImageUrl = imageButtons[0].getAttribute('data-image-url');
+            copyImageToClipboard(firstImageUrl);
+            
+            // Feedback für den Benutzer
+            const originalText = copyAllImagesButton.textContent;
+            copyAllImagesButton.textContent = 'Erstes Bild kopiert!';
+            setTimeout(() => {
+                copyAllImagesButton.textContent = originalText;
+            }, 2000);
+        } else {
+            showError('Keine Bilder zum Kopieren vorhanden.');
+        }
+    });
+    
+    // Event-Listener für Download-All-Images-Button
+    downloadAllImagesButton.addEventListener('click', function() {
+        const imageButtons = document.querySelectorAll('.download-image-button');
+        if (imageButtons.length > 0) {
+            // Simuliere Klicks auf alle Download-Buttons mit Verzögerung
+            imageButtons.forEach((button, index) => {
+                setTimeout(() => {
+                    button.click();
+                }, index * 500); // 500ms Verzögerung zwischen Downloads
+            });
+            
+            // Feedback für den Benutzer
+            const originalText = downloadAllImagesButton.textContent;
+            downloadAllImagesButton.textContent = `${imageButtons.length} Bilder werden heruntergeladen...`;
+            setTimeout(() => {
+                downloadAllImagesButton.textContent = originalText;
+            }, 2000 + imageButtons.length * 500);
+        } else {
+            showError('Keine Bilder zum Herunterladen vorhanden.');
         }
     });
 
@@ -190,7 +361,25 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // URL-Validierung
             const parsedUrl = new URL(url);
-            return parsedUrl.hostname.includes('kleinanzeigen.de') && parsedUrl.protocol.startsWith('http');
+            const hostname = parsedUrl.hostname;
+            
+            // Überprüfe, ob die Domain kleinanzeigen.de oder ebay-kleinanzeigen.de ist (mit oder ohne www)
+            const isKleinanzeigenDomain = 
+                hostname === 'www.kleinanzeigen.de' || 
+                hostname === 'kleinanzeigen.de' || 
+                hostname === 'm.kleinanzeigen.de' ||
+                hostname === 'www.ebay-kleinanzeigen.de' ||
+                hostname === 'ebay-kleinanzeigen.de' ||
+                hostname === 'm.ebay-kleinanzeigen.de';
+            
+            // Überprüfe, ob der Pfad auf eine Anzeige hinweist
+            const isAnzeigePath = 
+                parsedUrl.pathname.includes('/s-anzeige/') || 
+                parsedUrl.pathname.includes('/s-details/');
+            
+            // Akzeptiere nur HTTP(S) URLs mit gültiger Domain und bevorzugt Anzeigepfad
+            // Wenn kein Anzeigepfad, akzeptiere trotzdem die Domain für flexiblere Handhabung
+            return isKleinanzeigenDomain && parsedUrl.protocol.startsWith('http');
         } catch (e) {
             // Wenn es keine gültige URL ist, aber ein kurzer Text, behandeln wir es als Stichwort
             return !url.includes('.') && url.length < 30;
@@ -198,79 +387,85 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Funktion zum Anzeigen der Daten
-    function displayData(data) {
-        try {
-            // Prüfen, ob es sich um Fehlerdaten handelt
-            if (data.error) {
-                showError(data.message || 'Ein Fehler ist aufgetreten.');
-                hideLoading();
-                return;
-            }
-            
-            // Daten in der UI anzeigen mit Fehlerbehandlung
-            titleContent.textContent = data.title || 'Kein Titel gefunden';
-            descriptionContent.textContent = data.description || 'Keine Beschreibung gefunden';
-            
-            // Zusätzliche Informationen anzeigen, wenn verfügbar
-            if (data.price || data.location) {
-                // Entferne vorhandene zusätzliche Informationen, falls vorhanden
-                const existingInfo = resultsContainer.querySelector('.additional-info');
-                if (existingInfo) {
-                    existingInfo.remove();
-                }
-                
-                const additionalInfo = document.createElement('div');
-                additionalInfo.className = 'additional-info';
-                
-                if (data.price) {
-                    const priceElement = document.createElement('p');
-                    priceElement.innerHTML = `<strong>Preis:</strong> ${data.price}`;
-                    additionalInfo.appendChild(priceElement);
-                }
-                
-                if (data.location) {
-                    const locationElement = document.createElement('p');
-                    locationElement.innerHTML = `<strong>Standort:</strong> ${data.location}`;
-                    additionalInfo.appendChild(locationElement);
-                }
-                
-                // Füge die zusätzlichen Informationen vor den Ergebnissen ein
-                resultsContainer.insertBefore(additionalInfo, resultsContainer.firstChild);
-            }
-            
-            // Bilder anzeigen mit Fehlerbehandlung
-            if (data.images && data.images.length > 0) {
-                data.images.forEach(imageUrl => {
-                    if (imageUrl && typeof imageUrl === 'string') {
-                        addImageToContainer(imageUrl);
-                    }
-                });
-            } else {
-                const noImagesMessage = document.createElement('p');
-                noImagesMessage.textContent = 'Keine Bilder gefunden.';
-                imagesContainer.appendChild(noImagesMessage);
-            }
-            
+function displayData(data) {
+    try {
+        // Prüfen, ob es sich um Fehlerdaten handelt
+        if (data.error) {
+            showError(data.message || 'Ein Fehler ist aufgetreten.');
             hideLoading();
-            showResults();
-        } catch (error) {
-            console.error('Fehler beim Anzeigen der Daten:', error);
-            showError('Fehler beim Anzeigen der Daten: ' + error.message);
-            hideLoading();
+            return;
         }
+        
+        // Titel anzeigen
+        titleResult.textContent = data.title || 'Kein Titel gefunden';
+        
+        // Beschreibung anzeigen
+        descriptionResult.textContent = data.description || 'Keine Beschreibung gefunden';
+        
+        // Preis anzeigen
+        priceResult.textContent = data.price || 'Kein Preis angegeben';
+        
+        // Standort anzeigen
+        locationResult.textContent = data.location || 'Kein Standort angegeben';
+        
+        // Bilder anzeigen mit Fehlerbehandlung
+        imagesContainer.innerHTML = '';
+        if (data.images && data.images.length > 0) {
+            data.images.forEach(imageUrl => {
+                if (imageUrl && typeof imageUrl === 'string') {
+                    addImageToContainer(imageUrl);
+                }
+            });
+        } else {
+            const noImagesMessage = document.createElement('p');
+            noImagesMessage.textContent = 'Keine Bilder gefunden.';
+            noImagesMessage.className = 'no-images-message';
+            imagesContainer.appendChild(noImagesMessage);
+        }
+        
+        // Original-Link aktualisieren
+        if (data.url) {
+            originalLink.href = data.url;
+            originalLink.textContent = data.url;
+        } else if (urlInput.value && isValidKleinanzeigenUrl(urlInput.value)) {
+            originalLink.href = urlInput.value;
+            originalLink.textContent = urlInput.value;
+        }
+        
+        // UI aktualisieren
+        hideLoading();
+        hideError();
+        showResults();
+    } catch (error) {
+        console.error('Fehler beim Anzeigen der Daten:', error);
+        showError('Fehler beim Anzeigen der Daten: ' + error.message);
+        hideLoading();
     }
+}
     
     // Verbesserte Funktion zum Extrahieren der Daten mit Timeout und Fehlerbehandlung
     function extractDataFromUrl(url) {
+        // Zurücksetzen des Wiederholungszählers
+        retryCount = 0;
+        
+        // Prüfen, ob der Benutzer offline ist
+        if (!navigator.onLine) {
+            showError('Du bist offline. Bitte überprüfe deine Internetverbindung und versuche es erneut.');
+            updateConnectionStatus('Offline', 'error');
+            return;
+        }
+        
         // UI-Status aktualisieren
         showLoading();
         hideError();
         clearResults();
         isProcessing = true;
+        updateConnectionStatus('Verbindung wird hergestellt...', 'pending');
         
         // Starte den Ladezeit-Timer
         loadingStartTime = Date.now();
         updateLoadingTime();
+        loadingSubtext.textContent = 'Verbinde mit Server...';
         
         // Timeout für die Anfrage setzen
         const timeoutId = setTimeout(() => {
@@ -278,29 +473,46 @@ document.addEventListener('DOMContentLoaded', function() {
                 showError('Die Anfrage dauert länger als erwartet. Bitte versuche es später erneut.');
                 hideLoading();
                 isProcessing = false;
+                updateConnectionStatus('Zeitüberschreitung', 'error');
             }
         }, CONFIG.OVERALL_TIMEOUT); // Timeout aus Konfiguration
         
         try {
-            // Wenn Demo-Modus aktiviert ist oder ein Stichwort eingegeben wurde
-            if (url.includes('demo') || (!url.includes('.') && url.length < 30)) {
-                // Prüfen, ob Demo-Daten im Cache sind
-                if (dataCache.has(url)) {
-                    const cachedData = dataCache.get(url);
-                    // Prüfen, ob die Cache-Daten noch gültig sind
-                    if (cachedData.timestamp && Date.now() - cachedData.timestamp < CONFIG.CACHE_EXPIRY) {
+            // Prüfen, ob die URL im Cache ist
+            if (dataCache.has(url)) {
+                const cachedData = dataCache.get(url);
+                // Prüfen, ob die Cache-Daten noch gültig sind
+                if (cachedData.timestamp && Date.now() - cachedData.timestamp < CONFIG.CACHE_EXPIRY) {
+                    // Zeige Cache-Status an
+                    updateConnectionStatus('Aus Cache geladen', 'success');
+                    loadingSubtext.textContent = 'Lade aus Cache...';
+                    
+                    // Kurze Verzögerung für bessere UX
+                    setTimeout(() => {
                         displayData(cachedData);
                         clearTimeout(timeoutId);
                         isProcessing = false;
-                        return;
-                    }
+                    }, 500);
+                    return;
+                } else {
+                    // Cache ist abgelaufen
+                    updateConnectionStatus('Cache abgelaufen, lade neu...', 'pending');
                 }
+            } else {
+                updateConnectionStatus('Neue Anfrage', 'pending');
+            }
+            
+            // Wenn Demo-Modus aktiviert ist oder ein Stichwort eingegeben wurde
+            const demoOptions = ['demo', 'iphone', 'sofa', 'mountainbike'];
+            if (demoOptions.some(option => url.toLowerCase().includes(option)) || (!url.includes('.') && url.length < 30)) {
+                loadingSubtext.textContent = 'Lade Demo-Daten...';
                 
                 // Simuliere Ladezeit für bessere Benutzererfahrung
                 setTimeout(() => {
                     try {
                         // Zeige Demo-Daten an
                         showDemoData(url);
+                        updateConnectionStatus('Demo-Modus', 'success');
                         clearTimeout(timeoutId);
                         isProcessing = false;
                     } catch (error) {
@@ -308,6 +520,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         showError('Fehler beim Anzeigen der Demo-Daten.');
                         hideLoading();
                         isProcessing = false;
+                        updateConnectionStatus('Demo-Fehler', 'error');
                     }
                 }, 1000);
                 return;
@@ -315,14 +528,16 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Wenn es eine echte Kleinanzeigen-URL ist
             if (isValidKleinanzeigenUrl(url)) {
+                loadingSubtext.textContent = 'Verbinde mit Kleinanzeigen...';
+                
                 // API-Anfrage an den Backend-Server senden mit Fetch API und AbortController für Timeout
                 const controller = new AbortController();
                 const signal = controller.signal;
                 
                 // Setze einen Timeout für die Fetch-Anfrage
-                const fetchTimeoutId = setTimeout(() => controller.abort(), 20000); // 20 Sekunden Timeout
+                const fetchTimeoutId = setTimeout(() => controller.abort(), CONFIG.FETCH_TIMEOUT);
                 
-                // Funktion für Wiederholungsversuche bei Fehlern
+                // Funktion für Wiederholungsversuche bei Fehlern mit exponentieller Backoff-Strategie
                 function fetchWithRetry() {
                     if (retryCount >= CONFIG.MAX_RETRIES) {
                         throw new Error(`Maximale Anzahl an Wiederholungsversuchen (${CONFIG.MAX_RETRIES}) erreicht.`);
@@ -332,6 +547,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     const controller = new AbortController();
                     const signal = controller.signal;
                     const fetchTimeoutId = setTimeout(() => controller.abort(), CONFIG.FETCH_TIMEOUT);
+                    
+                    // Aktualisiere den Ladestatus
+                    if (retryCount > 0) {
+                        loadingSubtext.textContent = `Wiederholungsversuch ${retryCount} von ${CONFIG.MAX_RETRIES}...`;
+                        updateConnectionStatus(`Wiederhole (${retryCount}/${CONFIG.MAX_RETRIES})`, 'pending');
+                    }
                     
                     return fetch(`/api/extract?url=${encodeURIComponent(url)}`, { 
                         signal,
@@ -359,16 +580,20 @@ document.addEventListener('DOMContentLoaded', function() {
                         if (
                             error.name === 'AbortError' || // Timeout
                             error.message.includes('network') || // Netzwerkfehler
+                            error.message.includes('fetch') || // Fetch-Fehler
+                            error.message.includes('connection') || // Verbindungsfehler
                             (error.message.includes('HTTP-Fehler') && [429, 500, 502, 503, 504].includes(parseInt(error.message.match(/\d+/)?.[0] || '0'))) // Server-Fehler
                         ) {
                             retryCount++;
                             console.log(`Wiederholungsversuch ${retryCount} von ${CONFIG.MAX_RETRIES}...`);
                             
-                            // Zeige dem Benutzer an, dass ein Wiederholungsversuch stattfindet
-                            loadingTimeElement.textContent += ` (Versuch ${retryCount} von ${CONFIG.MAX_RETRIES})`;
+                            // Exponentielles Backoff mit Jitter (zufällige Variation)
+                            const baseDelay = CONFIG.RETRY_DELAY * Math.pow(2, retryCount - 1);
+                            const jitter = Math.random() * 0.4 - 0.2; // -20% bis +20%
+                            const delay = Math.min(baseDelay * (1 + jitter), 15000); // Max 15 Sekunden
                             
-                            // Warte kurz vor dem nächsten Versuch
-                            return new Promise(resolve => setTimeout(resolve, CONFIG.RETRY_DELAY))
+                            // Warte mit exponentiell steigender Verzögerung vor dem nächsten Versuch
+                            return new Promise(resolve => setTimeout(resolve, delay))
                                 .then(() => fetchWithRetry());
                         }
                         
@@ -378,21 +603,28 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 
                 // Starte den ersten Versuch
-                 fetchWithRetry()
-                     .then(data => {
-                         // Füge Zeitstempel hinzu und speichere die Daten im Cache
-                         data.timestamp = Date.now();
-                         dataCache.set(url, data);
-                         
-                         // Bereinige den Cache
-                         cleanupCache();
-                         
-                         // Zeige die Daten an
-                         displayData(data);
-                         
-                         clearTimeout(timeoutId);
-                         isProcessing = false;
-                     })
+                fetchWithRetry()
+                    .then(data => {
+                        // Füge Zeitstempel hinzu und speichere die Daten im Cache
+                        data.timestamp = Date.now();
+                        dataCache.set(url, data);
+                        
+                        // Speichere den Cache in localStorage
+                        saveCacheToStorage();
+                        
+                        // Bereinige den Cache
+                        cleanupCache();
+                        
+                        // Aktualisiere den Verbindungsstatus
+                        updateConnectionStatus('Erfolgreich geladen', 'success');
+                        updateCacheStatus(`${dataCache.size} Einträge im Cache`);
+                        
+                        // Zeige die Daten an
+                        displayData(data);
+                        
+                        clearTimeout(timeoutId);
+                        isProcessing = false;
+                    })
                     .catch(error => {
                         console.error('Fehler beim Abrufen der Daten:', error);
                         
@@ -400,15 +632,27 @@ document.addEventListener('DOMContentLoaded', function() {
                         
                         if (error.name === 'AbortError') {
                             errorMsg = 'Die Anfrage wurde wegen Zeitüberschreitung abgebrochen. Bitte versuche es später erneut.';
+                            updateConnectionStatus('Zeitüberschreitung', 'error');
                         } else if (error.message.includes('Maximale Anzahl')) {
                             errorMsg = error.message + ' Bitte versuche es später erneut.';
+                            updateConnectionStatus('Zu viele Versuche', 'error');
+                        } else if (error.message.includes('HTTP-Fehler: 404')) {
+                            errorMsg = 'Die angegebene Kleinanzeigen-URL wurde nicht gefunden. Bitte überprüfe die URL und versuche es erneut.';
+                            updateConnectionStatus('Seite nicht gefunden', 'error');
+                        } else if (error.message.includes('HTTP-Fehler: 403')) {
+                            errorMsg = 'Der Zugriff auf diese Kleinanzeigen-URL wurde verweigert. Bitte versuche es später erneut.';
+                            updateConnectionStatus('Zugriff verweigert', 'error');
                         } else if (error.message) {
                             errorMsg += ' ' + error.message;
+                            updateConnectionStatus('Fehler', 'error');
                         }
                         
                         // Speichere den Fehler im Cache, um wiederholte Fehler zu vermeiden
                         const errorData = { error: true, message: errorMsg, timestamp: Date.now() };
                         dataCache.set(url, errorData);
+                        
+                        // Speichere den aktualisierten Cache
+                        saveCacheToStorage();
                         
                         showError(errorMsg);
                         hideLoading();
@@ -419,16 +663,18 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             // Wenn keine gültige URL eingegeben wurde
-            showError('Bitte gib eine gültige Kleinanzeigen-URL oder ein Stichwort wie "demo", "iphone" oder "sofa" ein.');
+            showError('Bitte gib eine gültige Kleinanzeigen-URL oder ein Stichwort wie "demo", "iphone", "sofa" oder "mountainbike" ein.');
             hideLoading();
             clearTimeout(timeoutId);
             isProcessing = false;
+            updateConnectionStatus('Ungültige URL', 'error');
         } catch (error) {
             console.error('Unerwarteter Fehler:', error);
             showError('Ein unerwarteter Fehler ist aufgetreten: ' + error.message);
             hideLoading();
             clearTimeout(timeoutId);
             isProcessing = false;
+            updateConnectionStatus('Fehler', 'error');
         }
     }
 
@@ -519,6 +765,9 @@ document.addEventListener('DOMContentLoaded', function() {
             // Speichere die Demo-Daten im Cache
             dataCache.set(url, demoData);
             
+            // Speichere den aktualisierten Cache
+            saveCacheToStorage();
+            
             // Zeige die Daten an
             displayData(demoData);
             
@@ -538,8 +787,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         try {
-            const imageItem = document.createElement('div');
-            imageItem.className = 'image-item';
+            const imageContainer = document.createElement('div');
+            imageContainer.className = 'image-container';
             
             const img = document.createElement('img');
             // Platzhalter-Bild anzeigen, während das eigentliche Bild geladen wird
@@ -562,7 +811,9 @@ document.addEventListener('DOMContentLoaded', function() {
             // Fehlerbehandlung für Bilder
             img.onerror = function() {
                 this.onerror = null;
-                this.src = 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22 viewBox%3D%220 0 300 200%22%3E%3Crect width%3D%22300%22 height%3D%22200%22 fill%3D%22%23f5f5f5%22%3E%3C%2Frect%3E%3Ctext x%3D%22150%22 y%3D%22100%22 font-size%3D%2220%22 text-anchor%3D%22middle%22 alignment-baseline%3D%22middle%22 fill%3D%22%23999999%22%3EBild nicht verfügbar%3C%2Ftext%3E%3C%2Fsvg%3E';
+                this.src = 'data:image/svg+xml;charset=UTF-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"%3E%3Crect width="200" height="200" fill="%23f5f5f5"/%3E%3Cpath d="M100 75 L75 125 L125 125 Z" fill="%23ccc"/%3E%3Ccircle cx="100" cy="65" r="10" fill="%23ccc"/%3E%3Ctext x="100" y="150" text-anchor="middle" font-family="sans-serif" font-size="12" fill="%23999"%3EBild nicht verfügbar%3C/text%3E%3C/svg%3E';
+                this.alt = 'Bild nicht verfügbar';
+                this.classList.add('error');
                 console.warn('Bild konnte nicht geladen werden:', imageUrl);
             };
             
@@ -572,15 +823,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 this.classList.add('loaded');
             };
             
+            imageContainer.appendChild(img);
+            
+            // Aktionsbuttons hinzufügen
+            const imageButtons = document.createElement('div');
+            imageButtons.className = 'image-buttons';
+            
+            // Kopier-Button
             const copyButton = document.createElement('button');
+            copyButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+            copyButton.title = 'Bild kopieren';
             copyButton.className = 'copy-image-button';
-            copyButton.textContent = 'Kopieren';
             copyButton.setAttribute('data-image-url', imageUrl);
             
-            // Füge einen Download-Button hinzu
+            // Download-Button
             const downloadButton = document.createElement('button');
+            downloadButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>';
+            downloadButton.title = 'Bild herunterladen';
             downloadButton.className = 'download-image-button';
-            downloadButton.textContent = 'Download';
             downloadButton.addEventListener('click', function() {
                 try {
                     const a = document.createElement('a');
@@ -588,16 +848,25 @@ document.addEventListener('DOMContentLoaded', function() {
                     a.download = 'bild_' + new Date().getTime() + '.jpg';
                     a.target = '_blank';
                     a.click();
+                    
+                    // Visuelles Feedback
+                    const originalHTML = downloadButton.innerHTML;
+                    downloadButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>';
+                    
+                    setTimeout(() => {
+                        downloadButton.innerHTML = originalHTML;
+                    }, 2000);
                 } catch (error) {
                     console.error('Fehler beim Herunterladen des Bildes:', error);
                     alert('Das Bild konnte nicht heruntergeladen werden. Versuche es mit Rechtsklick -> Bild speichern unter...');
                 }
             });
             
-            imageItem.appendChild(img);
-            imageItem.appendChild(copyButton);
-            imageItem.appendChild(downloadButton);
-            imagesContainer.appendChild(imageItem);
+            imageButtons.appendChild(copyButton);
+            imageButtons.appendChild(downloadButton);
+            imageContainer.appendChild(imageButtons);
+            
+            imagesContainer.appendChild(imageContainer);
             
             // Beobachte das Bild für Lazy Loading
             observer.observe(img);
@@ -617,14 +886,15 @@ document.addEventListener('DOMContentLoaded', function() {
         loadingTimer = setTimeout(updateLoadingTime, 1000);
     }
     
-    // Hilfsfunktionen für die UI
+    // UI-Hilfsfunktionen
     function showLoading() {
-        loadingIndicator.style.display = 'block';
+        loadingIndicator.classList.remove('hidden');
         loadingTimeElement.textContent = '0s';
+        loadingSubtext.textContent = 'Verbinde...';
     }
 
     function hideLoading() {
-        loadingIndicator.style.display = 'none';
+        loadingIndicator.classList.add('hidden');
         if (loadingTimer) {
             clearTimeout(loadingTimer);
             loadingTimer = null;
@@ -632,27 +902,56 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function showResults() {
-        resultsContainer.style.display = 'block';
+        resultsContainer.classList.remove('hidden');
     }
 
     function hideResults() {
-        resultsContainer.style.display = 'none';
+        resultsContainer.classList.add('hidden');
     }
 
     function showError(message) {
-        errorMessage.querySelector('p').textContent = message;
-        errorMessage.style.display = 'block';
+        errorText.textContent = message;
+        errorContainer.classList.remove('hidden');
     }
 
     function hideError() {
-        errorMessage.style.display = 'none';
+        errorContainer.classList.add('hidden');
     }
 
     function clearResults() {
-        titleContent.textContent = '';
-        descriptionContent.textContent = '';
+        titleResult.textContent = '';
+        descriptionResult.textContent = '';
+        priceResult.textContent = '';
+        locationResult.textContent = '';
         imagesContainer.innerHTML = '';
         hideResults();
+    }
+    
+    function resetUI() {
+        // Ergebnisse zurücksetzen
+        clearResults();
+        
+        // UI-Elemente zurücksetzen
+        hideResults();
+        hideError();
+        hideLoading();
+        updateConnectionStatus('Bereit', 'idle');
+    }
+    
+    // Funktion zum Aktualisieren des Verbindungsstatus
+    function updateConnectionStatus(message, status) {
+        connectionStatus.textContent = message;
+        
+        // Entferne alle Status-Klassen
+        connectionStatus.classList.remove('status-idle', 'status-pending', 'status-success', 'status-error');
+        
+        // Füge die entsprechende Klasse hinzu
+        connectionStatus.classList.add('status-' + status);
+    }
+    
+    // Funktion zum Aktualisieren des Cache-Status
+    function updateCacheStatus(message) {
+        cacheStatus.textContent = message;
     }
 
     // Verbesserte Funktion zum Kopieren von Text in die Zwischenablage mit Fallback
@@ -700,63 +999,54 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Verbesserte Funktion zum Kopieren eines Bildes in die Zwischenablage
     function copyImageToClipboard(imageUrl) {
-        // Versuche, das Bild in die Zwischenablage zu kopieren (funktioniert nur in einigen Browsern)
-        try {
-            // Erstelle ein Canvas-Element und zeichne das Bild darauf
-            const img = new Image();
-            img.crossOrigin = 'anonymous'; // Versuche, CORS-Probleme zu umgehen
-            
-            img.onload = function() {
-                try {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0);
-                    
-                    // Versuche, das Canvas-Bild in die Zwischenablage zu kopieren
-                    canvas.toBlob(function(blob) {
-                        try {
-                            const item = new ClipboardItem({ 'image/png': blob });
-                            navigator.clipboard.write([item])
-                                .then(() => {
-                                    console.log('Bild erfolgreich in die Zwischenablage kopiert');
-                                })
-                                .catch(err => {
-                                    console.error('Fehler beim Kopieren des Bildes:', err);
-                                    // Fallback: Kopiere die Bild-URL
-                                    navigator.clipboard.writeText(imageUrl);
-                                });
-                        } catch (e) {
-                            console.error('ClipboardItem wird nicht unterstützt:', e);
-                            // Fallback: Kopiere die Bild-URL
-                            navigator.clipboard.writeText(imageUrl);
-                        }
-                    });
-                } catch (e) {
-                    console.error('Canvas-Fehler:', e);
-                    // Fallback: Kopiere die Bild-URL
-                    navigator.clipboard.writeText(imageUrl);
-                }
-            };
-            
-            img.onerror = function() {
-                console.error('Bild konnte nicht geladen werden');
-                // Fallback: Kopiere die Bild-URL
-                navigator.clipboard.writeText(imageUrl);
-            };
-            
-            img.src = imageUrl;
-        } catch (error) {
-            console.error('Fehler beim Kopieren des Bildes:', error);
-            // Fallback: Kopiere die Bild-URL
-            navigator.clipboard.writeText(imageUrl);
-        }
-            .catch(err => {
-                console.error('Fehler beim Kopieren der Bild-URL:', err);
-            });
+        // Erstelle ein temporäres Canvas-Element
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
         
-        // Eine fortgeschrittenere Implementierung könnte das Bild herunterladen
-        // und als Blob in die Zwischenablage kopieren, was jedoch komplexer ist
+        // Setze einen Timeout für den Fall, dass das Bild nicht geladen werden kann
+        const timeout = setTimeout(() => {
+            img.src = ''; // Abbrechen des Ladevorgangs
+            copyToClipboard(imageUrl);
+            console.log('Zeitüberschreitung beim Laden des Bildes, URL kopiert');
+        }, 5000); // 5 Sekunden Timeout
+        
+        img.onload = function() {
+            clearTimeout(timeout);
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            
+            // Versuche, das Bild als Blob zu kopieren
+            canvas.toBlob(function(blob) {
+                try {
+                    // Moderne Methode mit Clipboard API
+                    const item = new ClipboardItem({ 'image/png': blob });
+                    navigator.clipboard.write([item])
+                        .then(() => {
+                            console.log('Bild wurde in die Zwischenablage kopiert');
+                        })
+                        .catch(err => {
+                            console.error('Fehler beim Kopieren des Bildes:', err);
+                            // Fallback: Kopiere die URL
+                            copyToClipboard(imageUrl);
+                        });
+                } catch (error) {
+                    console.error('ClipboardItem wird nicht unterstützt:', error);
+                    // Fallback: Kopiere die URL
+                    copyToClipboard(imageUrl);
+                }
+            }, 'image/png');
+        };
+        
+        img.onerror = function() {
+            clearTimeout(timeout);
+            console.error('Fehler beim Laden des Bildes für die Zwischenablage');
+            // Fallback: Kopiere die URL
+            copyToClipboard(imageUrl);
+        };
+        
+        img.src = imageUrl;
     }
 });
